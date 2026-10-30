@@ -1,0 +1,15 @@
+{
+  "run_id": "20261030T191816Z",
+  "domain_file": "domains_test.txt",
+  "n_domains": 18,
+  "v6_vantage_valid": true,
+  "dns64_detected": true,
+  "resolvers": [
+    "1.1.1.1",
+    "8.8.8.8",
+    "9.9.9.9"
+  ],
+  "timeout_s": 8,
+  "workers": 20,
+  "user_agent": "Mozilla/5.0 (research scanner; IPv6 readiness study)"
+}
