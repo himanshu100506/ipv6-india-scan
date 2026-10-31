@@ -8,6 +8,8 @@ from urllib.parse import urlparse
 
 import dns.resolver
 
+SCANNER_VERSION = "v5"
+
 TIMEOUT = 8          # tcp + tls stages
 HTTP_TIMEOUT = 15    # waiting for the first HTTP response
 UA = "Mozilla/5.0 (research scanner; IPv6 readiness study)"
@@ -20,6 +22,9 @@ PUBLIC_NS = ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
 
 # Prefixes used by NAT64 translators; AAAA answers inside these are not real IPv6
 NAT64_NETS = [ipaddress.ip_network("64:ff9b::/96"), ipaddress.ip_network("64:ff9b:1::/48")]
+
+# TLS attempts, in order: strict, then no certificate check, then relaxed legacy TLS
+TLS_ATTEMPTS = [(True, False), (False, False), (False, True)]
 
 
 def normalize_domain(raw):
@@ -90,11 +95,30 @@ def check_dns(resolver, domain):
     return out
 
 
+def make_ctx(verify, relaxed):
+    ctx = ssl.create_default_context()
+    if not verify or relaxed:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    if relaxed:
+        # Measurement of reachability, not security: tolerate old servers.
+        ctx.options |= getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0x4)
+        try:
+            ctx.minimum_version = ssl.TLSVersion.TLSv1
+        except (ValueError, AttributeError):
+            pass
+        try:
+            ctx.set_ciphers("DEFAULT:@SECLEVEL=0")
+        except ssl.SSLError:
+            pass
+    return ctx
+
+
 def probe(domain, addr, family):
     """Connect straight to addr, then TLS, then a plain HTTP GET.
-    Records where it fails. A bad certificate is logged in cert_error and the
-    connection is retried without verification, so reachability and certificate
-    validity are measured separately."""
+    Records where it fails. A bad certificate is logged in cert_error; old TLS
+    that needed the relaxed settings is logged in tls_relaxed. Reachability is
+    judged on whether any attempt gets an HTTP answer."""
     r = {
         "addr": addr,
         "tcp_ms": None,
@@ -104,11 +128,12 @@ def probe(domain, addr, family):
         "stage_failed": None,
         "error": None,
         "cert_error": None,
+        "tls_relaxed": None,
     }
     sock = None
     stage = "tcp"
     try:
-        for verify in (True, False):
+        for i, (verify, relaxed) in enumerate(TLS_ATTEMPTS):
             stage = "tcp"
             sock = socket.socket(family, socket.SOCK_STREAM)
             sock.settimeout(TIMEOUT)
@@ -117,20 +142,24 @@ def probe(domain, addr, family):
             r["tcp_ms"] = elapsed_ms(t)
 
             stage = "tls"
-            ctx = ssl.create_default_context()
-            if not verify:
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
+            ctx = make_ctx(verify, relaxed)
             t = time.perf_counter()
             try:
                 sock = ctx.wrap_socket(sock, server_hostname=domain)
             except ssl.SSLCertVerificationError as e:
-                if not verify:
-                    raise
-                r["cert_error"] = e.verify_message
+                if r["cert_error"] is None:
+                    r["cert_error"] = e.verify_message
                 sock.close()
+                if i == len(TLS_ATTEMPTS) - 1:
+                    raise
+                continue
+            except ssl.SSLError:
+                sock.close()
+                if i == len(TLS_ATTEMPTS) - 1:
+                    raise
                 continue
             r["tls_ms"] = elapsed_ms(t)
+            r["tls_relaxed"] = relaxed
             break
 
         stage = "http"

@@ -9,7 +9,10 @@ import scan_one as s
 
 WORKERS = 20
 
-PROBE_KEYS = ("addr", "tcp_ms", "tls_ms", "http_ms", "status", "stage_failed", "error", "cert_error")
+PROBE_KEYS = (
+    "addr", "tcp_ms", "tls_ms", "http_ms", "status",
+    "stage_failed", "error", "cert_error", "tls_relaxed",
+)
 
 FIELDS = [
     "run_id", "scanned_at_utc", "domain", "verdict",
@@ -65,6 +68,7 @@ def main():
 
     meta = {
         "run_id": run_id,
+        "scanner_version": s.SCANNER_VERSION,
         "domain_file": sys.argv[1],
         "n_domains": len(domains),
         "v6_vantage_valid": v6_valid,
@@ -78,7 +82,8 @@ def main():
     with open(os.path.join(out_dir, "meta.json"), "w") as f:
         json.dump(meta, f, indent=2)
 
-    print(f"Run {run_id}: {len(domains)} domains, IPv6 vantage valid: {v6_valid}")
+    print(f"Run {run_id} (scanner {s.SCANNER_VERSION}): {len(domains)} domains, "
+          f"IPv6 vantage valid: {v6_valid}")
     if not v6_valid:
         print("WARNING: no IPv6 on this network. v6 results will be 'aaaa_present_v6_untested'.")
 
